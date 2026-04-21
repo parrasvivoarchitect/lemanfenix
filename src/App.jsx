@@ -1894,6 +1894,41 @@ export default function App() {
         (kmRows || []).forEach(r => {
           kmMap[r.experiment_id] = { colors: r.colors, visible: r.visible, maxTime: r.max_time };
         });
+
+        // Re-initialize KM settings for any experiment with survival data
+        // but no saved KM settings (covers first load after upload)
+        Object.entries(grouped).forEach(([expId, animals]) => {
+          if (kmMap[expId]) return; // already has settings
+          const hasSurv = animals.some(a =>
+            a.SURVIVAL_TIME !== null && a.SURVIVAL_TIME !== undefined && a.SURVIVAL_TIME !== ""
+          );
+          if (!hasSurv) return;
+          // Build default colors + visible
+          const groups = [...new Set(animals.map(a => a.TREATMENT_NAME))].filter(Boolean);
+          const colors = {};
+          const visible = {};
+          const DEFAULT_COLORS_LOCAL = ["#E05C5C","#5CE07A","#5C9EE0","#E0A05C","#5CE0D4","#E05CB8","#A0E05C","#E0C05C"];
+          groups.forEach((g, i) => {
+            colors[g] = g === "CONTROL" ? "#1a1a1a" : DEFAULT_COLORS_LOCAL[i % DEFAULT_COLORS_LOCAL.length];
+            visible[g] = true;
+          });
+          const allTimes = animals
+            .filter(a => a.SURVIVAL_TIME !== null && a.SURVIVAL_TIME !== undefined && a.SURVIVAL_TIME !== "")
+            .map(a => Number(a.SURVIVAL_TIME)).filter(t => !isNaN(t));
+          const autoMax = allTimes.length ? Math.max(120, Math.ceil(Math.max(...allTimes) / 30) * 30) : 120;
+          kmMap[expId] = { colors, visible, maxTime: autoMax };
+        });
+
+        // Also fix hasSurvival flag on experiments based on actual raw data
+        const fixedExps = loadedExps.map(exp => {
+          const animals = grouped[exp.id] || [];
+          const actualHasSurvival = animals.some(a =>
+            a.SURVIVAL_TIME !== null && a.SURVIVAL_TIME !== undefined && a.SURVIVAL_TIME !== ""
+          );
+          return { ...exp, hasSurvival: actualHasSurvival || exp.hasSurvival };
+        });
+        setExps(fixedExps);
+
         setKmSettings(kmMap);
 
         // Load saved graphs
@@ -1914,6 +1949,14 @@ export default function App() {
           treatment: mfMap.treatment || null,
           drugPrep: mfMap.drugPrep || null
         });
+
+        // Load uploaded file names (protocol, analysis) from experiments table
+        const uploadMap = {};
+        (expRows || []).forEach(r => {
+          if (r.doc_filename) uploadMap[`${r.id}_doc`] = r.doc_filename;
+          if (r.analysis_filename) uploadMap[`${r.id}_analysis`] = r.analysis_filename;
+        });
+        setUploads(uploadMap);
 
         setDbLoading(false);
       } catch(err) {
@@ -2197,7 +2240,11 @@ export default function App() {
             <div style={s.sectionTitle}>PROTOCOL DOCUMENT</div>
             <UploadZone label={`${expDetail.id}.docx`} accept=".docx"
               uploaded={uploads[`${curId}_doc`]}
-              onUpload={f => setUploads(p => ({ ...p, [`${curId}_doc`]: f.name }))} />
+              onUpload={f => {
+                setUploads(p => ({ ...p, [`${curId}_doc`]: f.name }));
+                setExps(prev => prev.map(e => e.id === curId ? { ...e, hasDoc: true } : e));
+                db.from("experiments").update({ has_doc: true, doc_filename: f.name }).eq("id", curId);
+              }} />
           </div>
 
           {/* Block 3 — Analysis */}
@@ -2205,7 +2252,11 @@ export default function App() {
             <div style={s.sectionTitle}>ANALYSIS FILE</div>
             <UploadZone label={`${expDetail.id}_Analysis.xlsx`} accept=".xlsx"
               uploaded={uploads[`${curId}_analysis`]}
-              onUpload={f => setUploads(p => ({ ...p, [`${curId}_analysis`]: f.name }))} />
+              onUpload={f => {
+                setUploads(p => ({ ...p, [`${curId}_analysis`]: f.name }));
+                setExps(prev => prev.map(e => e.id === curId ? { ...e, hasAnalysis: true } : e));
+                db.from("experiments").update({ has_analysis: true, analysis_filename: f.name }).eq("id", curId);
+              }} />
           </div>
 
           {/* Block 4 — RAW DATA */}
