@@ -724,13 +724,19 @@ function AIAssistant({ context }) {
 // ─── UPLOAD ZONE ────────────────────────────────────────────────────────────
 function UploadZone({ label, accept, uploaded, onUpload, color = GOLD }) {
   const ref = useRef();
+  // uploaded can be a string (filename) or { name, url }
+  const fileName = uploaded ? (typeof uploaded === "object" ? uploaded.name : uploaded) : null;
+  const fileUrl = uploaded && typeof uploaded === "object" ? uploaded.url : null;
   return (
     <div>
-      {uploaded
+      {fileName
         ? (
           <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "rgba(92,224,122,0.05)", border: "1px solid rgba(92,224,122,0.2)", borderRadius: 8 }}>
             <span style={{ color: "#5CE07A", fontSize: 13 }}>✓</span>
-            <span style={{ fontSize: 12, color: "rgba(255,255,255,0.7)" }}>{uploaded}</span>
+            <span style={{ fontSize: 12, color: "rgba(255,255,255,0.7)" }}>{fileName}</span>
+            {fileUrl && (
+              <a href={fileUrl} download={fileName} style={{ marginLeft: 8, fontSize: 11, color: GOLD, textDecoration: "none" }}>⬇ Download</a>
+            )}
             <button onClick={() => ref.current.click()} style={{ marginLeft: "auto", ...s.btnGhost, padding: "3px 9px", fontSize: 11 }}>Replace</button>
           </div>
         ) : (
@@ -1950,11 +1956,18 @@ export default function App() {
           drugPrep: mfMap.drugPrep || null
         });
 
-        // Load uploaded file names (protocol, analysis) from experiments table
+        // Load uploaded file metadata from file_uploads table
+        const { data: fileRows } = await db.from("file_uploads").select("*");
         const uploadMap = {};
+        (fileRows || []).forEach(r => {
+          uploadMap[r.key] = { name: r.filename, url: r.file_url };
+        });
+        // Also fall back to experiments table filenames
         (expRows || []).forEach(r => {
-          if (r.doc_filename) uploadMap[`${r.id}_doc`] = r.doc_filename;
-          if (r.analysis_filename) uploadMap[`${r.id}_analysis`] = r.analysis_filename;
+          if (r.doc_filename && !uploadMap[`${r.id}_doc`])
+            uploadMap[`${r.id}_doc`] = { name: r.doc_filename, url: null };
+          if (r.analysis_filename && !uploadMap[`${r.id}_analysis`])
+            uploadMap[`${r.id}_analysis`] = { name: r.analysis_filename, url: null };
         });
         setUploads(uploadMap);
 
@@ -2240,10 +2253,23 @@ export default function App() {
             <div style={s.sectionTitle}>PROTOCOL DOCUMENT</div>
             <UploadZone label={`${expDetail.id}.docx`} accept=".docx"
               uploaded={uploads[`${curId}_doc`]}
-              onUpload={f => {
-                setUploads(p => ({ ...p, [`${curId}_doc`]: f.name }));
+              onUpload={async f => {
+                setUploads(p => ({ ...p, [`${curId}_doc`]: { name: f.name, url: null } }));
                 setExps(prev => prev.map(e => e.id === curId ? { ...e, hasDoc: true } : e));
-                db.from("experiments").update({ has_doc: true, doc_filename: f.name }).eq("id", curId);
+                // Upload file to Supabase Storage
+                const path = `${curId}/protocol/${f.name}`;
+                const { error: upErr } = await db.storage.from("experiment-files").upload(path, f, { upsert: true });
+                if (!upErr) {
+                  const { data: urlData } = db.storage.from("experiment-files").getPublicUrl(path);
+                  const url = urlData?.publicUrl || null;
+                  setUploads(p => ({ ...p, [`${curId}_doc`]: { name: f.name, url } }));
+                  await db.from("file_uploads").upsert({ key: `${curId}_doc`, experiment_id: curId, type: "doc", filename: f.name, file_url: url });
+                  await db.from("experiments").update({ has_doc: true, doc_filename: f.name }).eq("id", curId);
+                } else {
+                  console.error("Storage upload error:", upErr);
+                  // Still save filename even if storage fails
+                  await db.from("experiments").update({ has_doc: true, doc_filename: f.name }).eq("id", curId);
+                }
               }} />
           </div>
 
@@ -2252,10 +2278,21 @@ export default function App() {
             <div style={s.sectionTitle}>ANALYSIS FILE</div>
             <UploadZone label={`${expDetail.id}_Analysis.xlsx`} accept=".xlsx"
               uploaded={uploads[`${curId}_analysis`]}
-              onUpload={f => {
-                setUploads(p => ({ ...p, [`${curId}_analysis`]: f.name }));
+              onUpload={async f => {
+                setUploads(p => ({ ...p, [`${curId}_analysis`]: { name: f.name, url: null } }));
                 setExps(prev => prev.map(e => e.id === curId ? { ...e, hasAnalysis: true } : e));
-                db.from("experiments").update({ has_analysis: true, analysis_filename: f.name }).eq("id", curId);
+                const path = `${curId}/analysis/${f.name}`;
+                const { error: upErr } = await db.storage.from("experiment-files").upload(path, f, { upsert: true });
+                if (!upErr) {
+                  const { data: urlData } = db.storage.from("experiment-files").getPublicUrl(path);
+                  const url = urlData?.publicUrl || null;
+                  setUploads(p => ({ ...p, [`${curId}_analysis`]: { name: f.name, url } }));
+                  await db.from("file_uploads").upsert({ key: `${curId}_analysis`, experiment_id: curId, type: "analysis", filename: f.name, file_url: url });
+                  await db.from("experiments").update({ has_analysis: true, analysis_filename: f.name }).eq("id", curId);
+                } else {
+                  console.error("Storage upload error:", upErr);
+                  await db.from("experiments").update({ has_analysis: true, analysis_filename: f.name }).eq("id", curId);
+                }
               }} />
           </div>
 
