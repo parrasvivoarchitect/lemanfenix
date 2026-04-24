@@ -796,37 +796,73 @@ function UploadZone({ label, accept, uploaded, onUpload, color = GOLD }) {
 }
 
 // ─── OTHER FILES BLOCK ──────────────────────────────────────────────────────
-function OtherFiles({ files, onAdd }) {
-  const [name, setName] = useState(""); const [desc, setDesc] = useState("");
+function OtherFiles({ files, onAdd, onRemove, expId }) {
+  const [name, setName] = useState(""); 
+  const [desc, setDesc] = useState("");
+  const [uploading, setUploading] = useState(false);
   const ref = useRef();
+
+  const handleFile = async (file) => {
+    setUploading(true);
+    const path = `${expId}/other/${Date.now()}_${file.name}`;
+    const { error } = await db.storage.from("experiment-files").upload(path, file, { upsert: true });
+    let fileUrl = null;
+    if (!error) {
+      const { data: urlData } = db.storage.from("experiment-files").getPublicUrl(path);
+      fileUrl = urlData?.publicUrl || null;
+    }
+    onAdd({ 
+      label: name || file.name, 
+      desc, 
+      size: `${(file.size / 1024).toFixed(0)} KB`, 
+      filename: file.name,
+      fileUrl
+    });
+    setName(""); setDesc("");
+    setUploading(false);
+  };
+
   return (
     <div>
       {files.map((f, i) => (
-        <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 7, marginBottom: 7 }}>
-          <span>📎</span>
-          <div>
-            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.8)" }}>{f.label}</div>
-            {f.desc && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>{f.desc}</div>}
+        <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "rgba(255,252,245,0.03)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, marginBottom: 8 }}>
+          <span style={{ fontSize: 18 }}>📎</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, color: "rgba(255,255,255,0.85)", fontWeight: 600 }}>{f.label}</div>
+            {f.desc && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 1 }}>{f.desc}</div>}
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", marginTop: 1 }}>{f.size} · {f.filename}</div>
           </div>
-          <span style={{ marginLeft: "auto", fontSize: 10, color: "rgba(255,255,255,0.25)" }}>{f.size}</span>
+          <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+            {f.fileUrl ? (
+              <a href={f.fileUrl} target="_blank" rel="noopener noreferrer" style={{
+                padding: "5px 12px", borderRadius: 6, fontSize: 12, fontWeight: 600,
+                background: "rgba(190,165,75,0.12)", border: "1px solid rgba(190,165,75,0.3)",
+                color: GOLD, textDecoration: "none"
+              }}>⬇ Download</a>
+            ) : (
+              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", padding: "5px 8px" }}>No URL</span>
+            )}
+            {onRemove && (
+              <button onClick={() => onRemove(i)} style={{
+                background: "none", border: "1px solid rgba(255,255,255,0.08)",
+                borderRadius: 6, color: "rgba(255,255,255,0.3)", cursor: "pointer", 
+                fontSize: 12, padding: "5px 10px"
+              }}>×</button>
+            )}
+          </div>
         </div>
       ))}
-      <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-        <input value={name} onChange={e => setName(e.target.value)} placeholder="File label"
-          style={{ ...s.input, width: 140, padding: "6px 10px", fontSize: 12 }} />
+      <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap", alignItems: "center" }}>
+        <input value={name} onChange={e => setName(e.target.value)} placeholder="File label (optional)"
+          style={{ ...s.input, width: 150, padding: "7px 10px", fontSize: 12 }} />
         <input value={desc} onChange={e => setDesc(e.target.value)} placeholder="Description (optional)"
-          style={{ ...s.input, flex: 1, padding: "6px 10px", fontSize: 12 }} />
-        <button onClick={() => ref.current.click()} style={{ ...s.btnGhost, fontSize: 11 }}>+ File</button>
+          style={{ ...s.input, flex: 1, padding: "7px 10px", fontSize: 12 }} />
+        <button onClick={() => ref.current.click()} disabled={uploading} style={{ ...s.btnGhost, fontSize: 12, opacity: uploading ? 0.5 : 1 }}>
+          {uploading ? "Uploading…" : "+ Add File"}
+        </button>
       </div>
       <input ref={ref} type="file" style={{ display: "none" }}
-        onChange={e => {
-          if (e.target.files[0]) {
-            const f = e.target.files[0];
-            onAdd({ label: name || f.name, desc, size: `${(f.size / 1024).toFixed(0)} KB`, filename: f.name });
-            setName(""); setDesc("");
-          }
-          e.target.value = "";
-        }} />
+        onChange={e => { if (e.target.files[0]) handleFile(e.target.files[0]); e.target.value = ""; }} />
     </div>
   );
 }
@@ -1940,10 +1976,16 @@ function PublicationsPage({ publications, setPublications }) {
           <div style={{ marginBottom: 18 }}>
             <label style={s.label}>PDF FILE</label>
             <div onClick={() => ref.current.click()} style={{
-              padding: "14px", border: `1px dashed rgba(190,165,75,0.25)`, borderRadius: 8,
-              textAlign: "center", cursor: "pointer", color: form.file ? GOLD : "rgba(255,255,255,0.3)", fontSize: 13
+              padding: "14px", border: `1px dashed ${form.file ? "rgba(190,165,75,0.5)" : "rgba(190,165,75,0.2)"}`, 
+              borderRadius: 8, textAlign: "center", cursor: "pointer", 
+              background: form.file ? "rgba(190,165,75,0.06)" : "transparent",
+              color: form.file ? GOLD : "rgba(255,255,255,0.35)", fontSize: 13, transition: "all 0.2s"
             }}>
-              {form.file ? `✓ ${form.file.name}` : "⬆ Click to upload PDF"}
+              {form.file ? (
+                <span>✓ <strong>{form.file.name}</strong> ({(form.file.size/1024).toFixed(0)} KB) — click to change</span>
+              ) : (
+                <span>📄 Click to select PDF file</span>
+              )}
             </div>
             <input ref={ref} type="file" accept=".pdf" style={{ display: "none" }}
               onChange={e => { if (e.target.files[0]) setForm(f => ({ ...f, file: e.target.files[0] })); e.target.value = ""; }} />
@@ -2006,12 +2048,19 @@ function CompanyPage({ companyFiles, setCompanyFiles }) {
           <div style={{ fontSize: 12, color: GOLD, fontWeight: 700, letterSpacing: "0.1em", marginBottom: 14 }}>COMPANY LOGO</div>
           {companyFiles.logo ? (
             <div>
-              <img src={companyFiles.logo.url || ""} alt="Logo"
-                style={{ maxWidth: "100%", maxHeight: 120, objectFit: "contain", marginBottom: 14, borderRadius: 6, background: "rgba(255,255,255,0.05)", padding: 8 }} />
-              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 12 }}>{companyFiles.logo.name}</div>
+              <div style={{ background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: 16, marginBottom: 12, textAlign: "center" }}>
+                <img src={companyFiles.logo.url || ""} alt="Logo"
+                  style={{ maxWidth: "100%", maxHeight: 120, objectFit: "contain" }} />
+              </div>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 12 }}>✓ {companyFiles.logo.name}</div>
               <div style={{ display: "flex", gap: 8 }}>
-                <a href={companyFiles.logo.url} target="_blank" rel="noopener noreferrer" style={{ ...s.btnGhost, flex: 1, textAlign: "center", textDecoration: "none", fontSize: 12, display: "flex", alignItems: "center", justifyContent: "center" }}>⬇ Download</a>
-                <button onClick={() => logoRef.current.click()} style={{ ...s.btnGhost, flex: 1 }}>Replace</button>
+                {companyFiles.logo.url && (
+                  <a href={companyFiles.logo.url} target="_blank" rel="noopener noreferrer" style={{
+                    ...s.btnGhost, flex: 1, textAlign: "center", textDecoration: "none",
+                    fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", gap: 6
+                  }}>⬇ Download</a>
+                )}
+                <button onClick={() => logoRef.current.click()} style={{ ...s.btnGhost, flex: 1 }}>🔄 Replace</button>
               </div>
             </div>
           ) : (
@@ -2043,22 +2092,30 @@ function CompanyPage({ companyFiles, setCompanyFiles }) {
           <div style={{ fontSize: 12, color: GOLD, fontWeight: 700, letterSpacing: "0.1em", marginBottom: 14 }}>COMPANY VIDEO</div>
           {companyFiles.video ? (
             <div>
-              <video controls style={{ width: "100%", borderRadius: 6, marginBottom: 14 }}>
-                <source src={companyFiles.video.url || ""} />
+              <video controls style={{ width: "100%", borderRadius: 6, marginBottom: 12, background: "#000" }}>
+                <source src={companyFiles.video.url || ""} type="video/mp4" />
+                Your browser does not support the video tag.
               </video>
-              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 12 }}>{companyFiles.video.name}</div>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 12 }}>✓ {companyFiles.video.name}</div>
               <div style={{ display: "flex", gap: 8 }}>
-                <a href={companyFiles.video.url} target="_blank" rel="noopener noreferrer" style={{ ...s.btnGhost, flex: 1, textAlign: "center", textDecoration: "none", fontSize: 12, display: "flex", alignItems: "center", justifyContent: "center" }}>⬇ Download</a>
-                <button onClick={() => videoRef.current.click()} style={{ ...s.btnGhost, flex: 1 }}>Replace</button>
+                {companyFiles.video.url && (
+                  <a href={companyFiles.video.url} target="_blank" rel="noopener noreferrer" style={{
+                    ...s.btnGhost, flex: 1, textAlign: "center", textDecoration: "none",
+                    fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", gap: 6
+                  }}>⬇ Download</a>
+                )}
+                <button onClick={() => videoRef.current.click()} style={{ ...s.btnGhost, flex: 1 }}>🔄 Replace</button>
               </div>
             </div>
           ) : (
             <div onClick={() => videoRef.current.click()} style={{
               padding: "40px 20px", border: `1px dashed rgba(190,165,75,0.25)`, borderRadius: 8,
-              textAlign: "center", cursor: "pointer", color: "rgba(255,255,255,0.3)", fontSize: 13
+              textAlign: "center", cursor: "pointer", color: "rgba(255,255,255,0.35)", fontSize: 13,
+              transition: "all 0.2s"
             }}>
-              <div style={{ fontSize: 32, marginBottom: 10 }}>🎬</div>
-              Upload video (MP4, MOV)
+              <div style={{ fontSize: 36, marginBottom: 10 }}>🎬</div>
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>Upload Company Video</div>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.25)" }}>MP4, MOV, WebM — max 50MB</div>
             </div>
           )}
           <input ref={videoRef} type="file" accept=".mp4,.mov,.webm" style={{ display: "none" }}
@@ -2814,7 +2871,12 @@ export default function App() {
           {/* Block 5 — Other files */}
           <div style={{ ...s.card, padding: "22px 26px" }}>
             <div style={s.sectionTitle}>OTHER FILES</div>
-            <OtherFiles files={expFiles} onAdd={f => setOtherFiles(prev => ({ ...prev, [curId]: [...(prev[curId] || []), f] }))} />
+            <OtherFiles 
+              files={expFiles} 
+              expId={curId}
+              onAdd={f => setOtherFiles(prev => ({ ...prev, [curId]: [...(prev[curId] || []), f] }))}
+              onRemove={i => setOtherFiles(prev => ({ ...prev, [curId]: (prev[curId] || []).filter((_, j) => j !== i) }))}
+            />
           </div>
         </div>
         <AIAssistant context={aiCtx} />
