@@ -1911,30 +1911,45 @@ function Logo({ size = 36 }) {
 // ─── PUBLICATIONS PAGE ──────────────────────────────────────────────────────
 function PublicationsPage({ publications, setPublications }) {
   const [showAdd, setShowAdd] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ author: "", year: "", title: "", journal: "", file: null });
-  const ref = useRef();
+  const pdfInputRef = useRef(null);
+
+  const handlePdfSelect = (e) => {
+    const file = e.target.files[0];
+    if (file) setForm(prev => ({ ...prev, file }));
+    e.target.value = "";
+  };
 
   const add = async () => {
     if (!form.author || !form.title) return;
+    setSaving(true);
     let fileUrl = null;
     let fileName = form.file?.name || null;
-    // Upload PDF to Supabase Storage
     if (form.file) {
       const path = `publications/${Date.now()}_${form.file.name}`;
       const { error: upErr } = await db.storage.from("experiment-files").upload(path, form.file, { upsert: true });
       if (!upErr) {
         const { data: urlData } = db.storage.from("experiment-files").getPublicUrl(path);
         fileUrl = urlData?.publicUrl || null;
+      } else {
+        console.error("PDF upload error:", upErr);
       }
     }
-    // Save to Supabase
-    const { data: saved } = await db.from("publications").insert({
+    const { data: saved, error: dbErr } = await db.from("publications").insert({
       author: form.author, year: form.year, title: form.title,
       journal: form.journal, file_name: fileName, file_url: fileUrl
     }).select().single();
-    const newPub = { id: saved?.id || Date.now(), author: form.author, year: form.year, title: form.title, journal: form.journal, fileName, fileUrl };
+    if (dbErr) console.error("DB insert error:", dbErr);
+    const newPub = { 
+      id: saved?.id || Date.now(), 
+      author: form.author, year: form.year, 
+      title: form.title, journal: form.journal, 
+      fileName, fileUrl 
+    };
     setPublications(prev => [newPub, ...prev]);
     setForm({ author: "", year: "", title: "", journal: "", file: null });
+    setSaving(false);
     setShowAdd(false);
   };
 
@@ -1945,7 +1960,7 @@ function PublicationsPage({ publications, setPublications }) {
           <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800 }}>Publications</h2>
           <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>Research papers & references</div>
         </div>
-        <button onClick={() => setShowAdd(s => !s)} style={{ ...s.btnGold, marginLeft: "auto" }}>+ Add Paper</button>
+        <button onClick={() => setShowAdd(prev => !prev)} style={{ ...s.btnGold, marginLeft: "auto" }}>+ Add Paper</button>
       </div>
 
       {showAdd && (
@@ -1954,45 +1969,53 @@ function PublicationsPage({ publications, setPublications }) {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
             <div>
               <label style={s.label}>FIRST AUTHOR *</label>
-              <input value={form.author} onChange={e => setForm(f => ({ ...f, author: e.target.value }))}
+              <input value={form.author} onChange={e => setForm(prev => ({ ...prev, author: e.target.value }))}
                 placeholder="e.g. Smith J" style={s.input} />
             </div>
             <div>
               <label style={s.label}>YEAR *</label>
-              <input value={form.year} onChange={e => setForm(f => ({ ...f, year: e.target.value }))}
+              <input value={form.year} onChange={e => setForm(prev => ({ ...prev, year: e.target.value }))}
                 placeholder="2024" style={s.input} />
             </div>
           </div>
           <div style={{ marginBottom: 12 }}>
             <label style={s.label}>TITLE *</label>
-            <input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
+            <input value={form.title} onChange={e => setForm(prev => ({ ...prev, title: e.target.value }))}
               placeholder="Paper title" style={s.input} />
           </div>
           <div style={{ marginBottom: 12 }}>
             <label style={s.label}>JOURNAL</label>
-            <input value={form.journal} onChange={e => setForm(f => ({ ...f, journal: e.target.value }))}
+            <input value={form.journal} onChange={e => setForm(prev => ({ ...prev, journal: e.target.value }))}
               placeholder="e.g. Nature, PLOS ONE" style={s.input} />
           </div>
           <div style={{ marginBottom: 18 }}>
-            <label style={s.label}>PDF FILE</label>
-            <div onClick={() => ref.current.click()} style={{
-              padding: "14px", border: `1px dashed ${form.file ? "rgba(190,165,75,0.5)" : "rgba(190,165,75,0.2)"}`, 
-              borderRadius: 8, textAlign: "center", cursor: "pointer", 
-              background: form.file ? "rgba(190,165,75,0.06)" : "transparent",
-              color: form.file ? GOLD : "rgba(255,255,255,0.35)", fontSize: 13, transition: "all 0.2s"
+            <label style={s.label}>PDF FILE (optional)</label>
+            <div onClick={() => pdfInputRef.current && pdfInputRef.current.click()} style={{
+              padding: "16px", border: `1px dashed ${form.file ? "rgba(190,165,75,0.6)" : "rgba(190,165,75,0.2)"}`,
+              borderRadius: 8, textAlign: "center", cursor: "pointer",
+              background: form.file ? "rgba(190,165,75,0.07)" : "rgba(255,255,255,0.02)",
+              color: form.file ? GOLD : "rgba(255,255,255,0.4)", fontSize: 13, transition: "all 0.2s"
             }}>
-              {form.file ? (
-                <span>✓ <strong>{form.file.name}</strong> ({(form.file.size/1024).toFixed(0)} KB) — click to change</span>
-              ) : (
-                <span>📄 Click to select PDF file</span>
-              )}
+              {form.file
+                ? <span>✓ <strong>{form.file.name}</strong> ({(form.file.size/1024).toFixed(0)} KB) — click to change</span>
+                : <span>📄 Click to select PDF file</span>
+              }
             </div>
-            <input ref={ref} type="file" accept=".pdf" style={{ display: "none" }}
-              onChange={e => { if (e.target.files[0]) setForm(f => ({ ...f, file: e.target.files[0] })); e.target.value = ""; }} />
+            <input
+              ref={pdfInputRef}
+              type="file"
+              accept=".pdf"
+              style={{ display: "none" }}
+              onChange={handlePdfSelect}
+            />
           </div>
           <div style={{ display: "flex", gap: 10 }}>
-            <button onClick={add} style={{ ...s.btnGold, flex: 1 }}>Save</button>
-            <button onClick={() => setShowAdd(false)} style={{ ...s.btnGhost, flex: 1 }}>Cancel</button>
+            <button onClick={add} disabled={saving || !form.author || !form.title}
+              style={{ ...s.btnGold, flex: 1, opacity: (saving || !form.author || !form.title) ? 0.6 : 1 }}>
+              {saving ? "Saving…" : "Save"}
+            </button>
+            <button onClick={() => { setShowAdd(false); setForm({ author: "", year: "", title: "", journal: "", file: null }); }}
+              style={{ ...s.btnGhost, flex: 1 }}>Cancel</button>
           </div>
         </div>
       )}
