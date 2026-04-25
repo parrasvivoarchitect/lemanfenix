@@ -689,34 +689,48 @@ function AIAssistant({ context }) {
 
   const SYSTEM = `You are the AI research assistant for LemanFenix, a biotech startup (UHU/CEBEGA, Spain) developing feed additives to protect broiler chickens from heat-stress mortality during transport.
 
-MISSION: Help the science team analyze experiments, compare compounds, interpret survival data, and generate reports.
+MISSION: Help the science team analyze experiments, compare compounds, interpret survival data, and generate scientific reports.
 
 SCIENTIFIC CONTEXT:
-- Model: Broiler chickens exposed to 45-50°C heat stress for up to 3 hours
-- Primary endpoint: SURVIVAL_TIME (minutes until death; censored = survived)
-- Secondary endpoints: BW_0 (body weight g), RT_0 (rectal temperature °C), GLUCOSE_0 (blood glucose mg/dL) — all at baseline
-- Statistics: Kaplan-Meier survival curves, log-rank test, Welch t-test, AUC, median survival
-- Compounds use LM codes (e.g. LM0030 = Sodium Salicylate, LM0007 = Berberine, LM0008 = Betaine)
-- Normalization: survival times expressed as % of CONTROL median for cross-experiment comparison
+- Animal model: Broiler chickens exposed to 45-50°C heat stress during transport simulation (up to 3 hours)
+- Primary endpoint: SURVIVAL_TIME (minutes until death; blank/censored = animal survived the full experiment)
+- Secondary endpoints measured at BASELINE (before treatment):
+  * BW_0 = Body Weight (grams)
+  * RT_0 = Rectal Temperature (°C)  
+  * GLUCOSE_0 = Blood Glucose (mg/dL)
+- Statistics used: Kaplan-Meier survival curves, log-rank test (p<0.05 significant), Welch t-test, AUC
+- Compound naming: LM codes (e.g. LM0030 = Sodium Salicylate, LM0007 = Berberine, LM0008 = Betaine, LM0029 = Sodium Bicarbonate, LM0184 = Fenugreek, LM0212 = L-Tryptophan)
+- "3C" or "lead formula" = LM0008 + LM0029 + LM0184 (best combination found so far)
 
-CURRENT DATA SUMMARY:
+WHAT YOU CAN ACCESS:
+✅ Full RAW survival data per animal per group (individual survival times in minutes)
+✅ Baseline phenotype data (BW_0, RT_0, GLUCOSE_0) per animal
+✅ Experiment metadata (dates, objectives, key findings)
+✅ Group compositions and animal counts
+✅ Calculated statistics from the raw data
+
+WHAT YOU CANNOT ACCESS:
+❌ Word document contents (protocol files — binary format)
+❌ Excel analysis files (binary format)
+❌ Survival curve images/graphs
+
+FULL EXPERIMENT DATABASE:
 ${context}
 
 CAPABILITIES:
-- Summarize any experiment by ID
-- Compare compounds across experiments
-- Identify best-performing compounds
-- Explain statistical results (p-values, AUC, median survival)
-- Generate structured scientific reports
-- Suggest next experiments based on results
-- Interpret normalized vs raw survival data
+- Calculate median survival, % improvement vs control from raw data
+- Compare same compound across multiple experiments
+- Identify best-performing compounds with exact statistics
+- Generate formatted scientific reports with real numbers
+- Suggest next experiments based on patterns in data
+- Explain why an experiment succeeded or failed
 
 RESPONSE STYLE:
-- Be concise and scientifically precise
-- Use exact experiment IDs (EXP_000001) and compound codes (LM0030)
-- When reporting statistics, always include p-values and effect sizes
-- For reports, use clear sections with headers
-- If data is insufficient, say so clearly`;
+- Always use exact experiment IDs (EXP_000019) and compound codes (LM0212)
+- When you have raw survival times, calculate statistics yourself — don't guess
+- For reports: use clear headers, bullet points, exact numbers
+- Be honest about what data is available vs missing
+- If asked about protocol documents, explain you cannot read binary files but can analyze all numerical data`;
 
   const send = async () => {
     if (!input.trim() || loading) return;
@@ -2479,17 +2493,49 @@ export default function App() {
     const ctx = exps.map(e => {
       const raw = rawData[e.id] || [];
       const groups = [...new Set(raw.map(r => r.TREATMENT_NAME))].filter(Boolean);
-      const nAnimals = raw.length;
-      const hasSurv = e.hasSurvival;
+
+      // Build per-group survival statistics
+      const groupStats = groups.map(g => {
+        const animals = raw.filter(r => r.TREATMENT_NAME === g);
+        const survivalTimes = animals
+          .filter(a => a.SURVIVAL_TIME !== null && a.SURVIVAL_TIME !== undefined && a.SURVIVAL_TIME !== "")
+          .map(a => Number(a.SURVIVAL_TIME))
+          .filter(t => !isNaN(t))
+          .sort((a, b) => a - b);
+        const censored = animals.filter(a =>
+          a.manualCensored || a.SURVIVAL_TIME === null || a.SURVIVAL_TIME === undefined || a.SURVIVAL_TIME === ""
+        ).length;
+        const median = survivalTimes.length > 0
+          ? survivalTimes[Math.floor(survivalTimes.length / 2)]
+          : null;
+        const bwVals = animals.map(a => Number(a.BW_0)).filter(v => !isNaN(v));
+        const rtVals = animals.map(a => Number(a.RT_0)).filter(v => !isNaN(v));
+        const glucoseVals = animals.map(a => Number(a.GLUCOSE_0)).filter(v => !isNaN(v));
+        const mean = arr => arr.length ? (arr.reduce((a,b)=>a+b,0)/arr.length).toFixed(1) : "N/A";
+
+        return [
+          `    GROUP: ${g} | n=${animals.length} | events=${survivalTimes.length} | censored=${censored}`,
+          survivalTimes.length ? `      Survival times (min): ${survivalTimes.join(", ")}` : "      No survival times recorded",
+          median !== null ? `      Median survival: ${median} min` : "",
+          bwVals.length ? `      BW_0 mean: ${mean(bwVals)} g` : "",
+          rtVals.length ? `      RT_0 mean: ${mean(rtVals)} °C` : "",
+          glucoseVals.length ? `      GLUCOSE_0 mean: ${mean(glucoseVals)} mg/dL` : "",
+        ].filter(Boolean).join("\n");
+      }).join("\n");
+
       return [
-        `${e.id}: ${e.question || "No question"}`,
-        `  Period: ${e.start || "?"} → ${e.end || "?"}`,
-        `  Animals: ${nAnimals} | Groups: ${groups.join(", ") || "none"}`,
-        `  Has survival data: ${hasSurv ? "YES" : "NO"}`,
-        e.findings?.filter(Boolean).length ? `  Findings: ${e.findings.filter(Boolean).join("; ")}` : "",
-        e.objectives?.filter(Boolean).length ? `  Objectives: ${e.objectives.filter(Boolean).join("; ")}` : "",
+        `═══ ${e.id} ═══`,
+        `Question: ${e.question || "Not specified"}`,
+        `Period: ${e.start || "?"} → ${e.end || "?"}`,
+        `Total animals: ${raw.length}`,
+        e.objectives?.filter(Boolean).length ? `Objectives: ${e.objectives.filter(Boolean).map((o,i)=>`${i+1}) ${o}`).join(" | ")}` : "",
+        e.findings?.filter(Boolean).length ? `Findings: ${e.findings.filter(Boolean).map((f,i)=>`${i+1}) ${f}`).join(" | ")}` : "",
+        raw.length > 0 ? `RAW DATA BY GROUP:\n${groupStats}` : "No RAW data uploaded yet",
+        e.hasDoc ? `Protocol file: uploaded (Word document)` : "",
+        e.hasAnalysis ? `Analysis file: uploaded (Excel)` : "",
       ].filter(Boolean).join("\n");
     }).join("\n\n");
+
     setAiCtx(ctx || "No experiments loaded yet.");
   }, [exps, rawData]);
 
