@@ -679,7 +679,7 @@ function AIAssistant({ context }) {
   const [open, setOpen] = useState(false);
   const [msgs, setMsgs] = useState([{
     role: "assistant",
-    content: "Hello! I'm the LemanFenix AI research assistant. I have full context on your experiments, compounds, and survival data. Ask me anything."
+    content: "Hello! I'm the LemanFenix AI research assistant. I have full context on all your experiments, compounds, survival data and results. Ask me anything — I can summarize experiments, compare compounds, explain statistics, or generate reports."
   }]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -687,27 +687,59 @@ function AIAssistant({ context }) {
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs]);
 
+  const SYSTEM = `You are the AI research assistant for LemanFenix, a biotech startup (UHU/CEBEGA, Spain) developing feed additives to protect broiler chickens from heat-stress mortality during transport.
+
+MISSION: Help the science team analyze experiments, compare compounds, interpret survival data, and generate reports.
+
+SCIENTIFIC CONTEXT:
+- Model: Broiler chickens exposed to 45-50°C heat stress for up to 3 hours
+- Primary endpoint: SURVIVAL_TIME (minutes until death; censored = survived)
+- Secondary endpoints: BW_0 (body weight g), RT_0 (rectal temperature °C), GLUCOSE_0 (blood glucose mg/dL) — all at baseline
+- Statistics: Kaplan-Meier survival curves, log-rank test, Welch t-test, AUC, median survival
+- Compounds use LM codes (e.g. LM0030 = Sodium Salicylate, LM0007 = Berberine, LM0008 = Betaine)
+- Normalization: survival times expressed as % of CONTROL median for cross-experiment comparison
+
+CURRENT DATA SUMMARY:
+${context}
+
+CAPABILITIES:
+- Summarize any experiment by ID
+- Compare compounds across experiments
+- Identify best-performing compounds
+- Explain statistical results (p-values, AUC, median survival)
+- Generate structured scientific reports
+- Suggest next experiments based on results
+- Interpret normalized vs raw survival data
+
+RESPONSE STYLE:
+- Be concise and scientifically precise
+- Use exact experiment IDs (EXP_000001) and compound codes (LM0030)
+- When reporting statistics, always include p-values and effect sizes
+- For reports, use clear sections with headers
+- If data is insufficient, say so clearly`;
+
   const send = async () => {
     if (!input.trim() || loading) return;
     const userMsg = { role: "user", content: input };
     const newMsgs = [...msgs, userMsg];
     setMsgs(newMsgs); setInput(""); setLoading(true);
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
+      const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
-          system: `You are the AI research assistant for LemanFenix, a biotech startup developing heat-stress protection additives for broiler chickens during transport. You have deep knowledge of all experiments, compounds (LM codes), survival analysis, and scientific context. Current context:\n\n${context}\n\nBe concise, scientifically precise, and use exact compound/experiment IDs.`,
+          max_tokens: 2000,
+          system: SYSTEM,
           messages: newMsgs.map(m => ({ role: m.role, content: m.content }))
         })
       });
+      if (!res.ok) throw new Error(`Server error: ${res.status}`);
       const data = await res.json();
       const reply = data.content?.[0]?.text || "Could not generate response.";
       setMsgs(m => [...m, { role: "assistant", content: reply }]);
     } catch (e) {
-      setMsgs(m => [...m, { role: "assistant", content: "Connection error. Please retry." }]);
+      setMsgs(m => [...m, { role: "assistant", content: `Error: ${e.message}. Make sure ANTHROPIC_API_KEY is set in Vercel environment variables.` }]);
     }
     setLoading(false);
   };
@@ -747,6 +779,18 @@ function AIAssistant({ context }) {
             {loading && <div style={{ color: "rgba(194,183,138,0.5)", fontSize: 12, alignSelf: "flex-start" }}>Thinking…</div>}
             <div ref={endRef} />
           </div>
+          {/* Quick prompts — shown only at start */}
+          {msgs.length <= 1 && (
+            <div style={{ padding: "6px 12px 0", display: "flex", flexWrap: "wrap", gap: 5 }}>
+              {["Which compound performed best?","Summarize all experiments","Which experiments had p<0.05?","Generate a summary report"].map(q => (
+                <button key={q} onClick={() => setInput(q)} style={{
+                  fontSize: 10.5, padding: "4px 9px", borderRadius: 12, cursor: "pointer",
+                  background: "rgba(194,183,138,0.08)", border: "1px solid rgba(194,183,138,0.2)",
+                  color: "rgba(194,183,138,0.8)", whiteSpace: "nowrap"
+                }}>{q}</button>
+              ))}
+            </div>
+          )}
           <div style={{ padding: "10px 12px", borderTop: `1px solid rgba(255,255,255,0.07)`, display: "flex", gap: 8 }}>
             <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === "Enter" && send()}
               placeholder="Ask about your research…"
@@ -2427,7 +2471,21 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    setAiCtx(exps.map(e => `${e.id} (${e.date}): ${e.question} → ${e.answer}`).join("\n"));
+    const ctx = exps.map(e => {
+      const raw = rawData[e.id] || [];
+      const groups = [...new Set(raw.map(r => r.TREATMENT_NAME))].filter(Boolean);
+      const nAnimals = raw.length;
+      const hasSurv = e.hasSurvival;
+      return [
+        `${e.id}: ${e.question || "No question"}`,
+        `  Period: ${e.start || "?"} → ${e.end || "?"}`,
+        `  Animals: ${nAnimals} | Groups: ${groups.join(", ") || "none"}`,
+        `  Has survival data: ${hasSurv ? "YES" : "NO"}`,
+        e.findings?.filter(Boolean).length ? `  Findings: ${e.findings.filter(Boolean).join("; ")}` : "",
+        e.objectives?.filter(Boolean).length ? `  Objectives: ${e.objectives.filter(Boolean).join("; ")}` : "",
+      ].filter(Boolean).join("\n");
+    }).join("\n\n");
+    setAiCtx(ctx || "No experiments loaded yet.");
   }, [exps, rawData]);
 
   // Helpers
