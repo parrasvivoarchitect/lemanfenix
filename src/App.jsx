@@ -3006,9 +3006,6 @@ export default function App() {
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13, color: "rgba(255,255,255,0.82)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{exp.question}</div>
-                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.32)", marginTop: 3 }}>
-                      {exp.start && exp.end ? `${exp.start} → ${exp.end}` : exp.start || exp.end || ""}
-                    </div>
                   </div>
                   <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
                     {exp.hasDoc && <span title="Protocol .docx" style={{ fontSize: 10, padding: "2px 7px", borderRadius: 4, background: "rgba(255,252,245,0.06)", color: "rgba(255,255,255,0.45)" }}>📄</span>}
