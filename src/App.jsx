@@ -811,7 +811,7 @@ function OtherFiles({ files, onAdd, onRemove, expId }) {
       const { data: urlData } = db.storage.from("experiment-files").getPublicUrl(path);
       fileUrl = urlData?.publicUrl || null;
     }
-    onAdd({ 
+    await onAdd({ 
       label: name || file.name, 
       desc, 
       size: `${(file.size / 1024).toFixed(0)} KB`, 
@@ -2388,6 +2388,15 @@ export default function App() {
         });
         setUploads(uploadMap);
 
+        // Load other files per experiment
+        const { data: ofRows } = await db.from("other_files").select("*");
+        const ofMap = {};
+        (ofRows || []).forEach(r => {
+          if (!ofMap[r.experiment_id]) ofMap[r.experiment_id] = [];
+          ofMap[r.experiment_id].push({ label: r.label, desc: r.description, size: r.size, filename: r.filename, fileUrl: r.file_url, id: r.id });
+        });
+        setOtherFiles(ofMap);
+
         // Load publications
         const { data: pubRows } = await db.from("publications").select("*").order("created_at", { ascending: false });
         setPublications((pubRows || []).map(r => ({
@@ -2897,8 +2906,20 @@ export default function App() {
             <OtherFiles 
               files={expFiles} 
               expId={curId}
-              onAdd={f => setOtherFiles(prev => ({ ...prev, [curId]: [...(prev[curId] || []), f] }))}
-              onRemove={i => setOtherFiles(prev => ({ ...prev, [curId]: (prev[curId] || []).filter((_, j) => j !== i) }))}
+              onAdd={async f => {
+                // Save to Supabase DB
+                const { data: saved } = await db.from("other_files").insert({
+                  experiment_id: curId, label: f.label, description: f.desc,
+                  size: f.size, filename: f.filename, file_url: f.fileUrl
+                }).select().single();
+                const withId = { ...f, id: saved?.id };
+                setOtherFiles(prev => ({ ...prev, [curId]: [...(prev[curId] || []), withId] }));
+              }}
+              onRemove={async i => {
+                const file = (otherFiles[curId] || [])[i];
+                if (file?.id) await db.from("other_files").delete().eq("id", file.id);
+                setOtherFiles(prev => ({ ...prev, [curId]: (prev[curId] || []).filter((_, j) => j !== i) }));
+              }}
             />
           </div>
         </div>
@@ -2972,7 +2993,11 @@ export default function App() {
                 }}>
                   <div style={{ minWidth: 108 }}>
                     <div style={{ color: GOLD, fontWeight: 800, fontSize: 13, letterSpacing: "0.04em" }}>{exp.id}</div>
-                    <div style={{ color: "rgba(255,255,255,0.28)", fontSize: 11, marginTop: 2 }}>{exp.date}</div>
+                    {(exp.start || exp.end) && (
+                      <div style={{ color: "rgba(255,255,255,0.28)", fontSize: 11, marginTop: 2 }}>
+                        {exp.start && exp.end ? `${exp.start} → ${exp.end}` : exp.start || exp.end}
+                      </div>
+                    )}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13, color: "rgba(255,255,255,0.82)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{exp.question}</div>
